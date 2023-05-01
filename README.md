@@ -22,6 +22,7 @@ ssh-add {path-to-github-ssh-key}
 ```
 Setup euler:
 ```bash
+cd ../../scratch/{ethz-username}
 python3 -m venv venv
 source venv/bin/activate
 env2lmod
@@ -42,5 +43,5 @@ srun --gpus=1 --ntasks=4 --mem-per-cpu=4G --pty bash
 #### Batch
 ([gpu instruction](https://scicomp.ethz.ch/wiki/Getting_started_with_GPUs), [euler batch](https://scicomp.ethz.ch/wiki/Using_the_batch_system)):
 ```bash
-bsub -R "rusage[mem=64000, ngpus_excl_p=1]" -R "select[gpu_mtotal0>=10240]" -oo log.out -eo error.out -W 23:59 -B -N <your_python_command>
+TODO
 ```
