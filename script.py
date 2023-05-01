@@ -248,16 +248,64 @@ def stablediffusion(
     return Image.fromarray(image)
 
 
-def make_left_mask(W: int, H: int) -> torch.Tensor:
+# Bounded to [0, 0.5]
+def make_left_mask(W: int, H: int, percent=1.0) -> torch.Tensor:
+    assert percent <= 1.0
+    assert percent >= 0.0
     mask_left = torch.zeros(H, W, dtype=bool)
-    mask_left[:, 0 : int(W // 2)] = 1
+    mask_left[:, 0 : int(W // 2 * percent)] = 1
     return mask_left
 
 
-def make_right_mask(W: int, H: int) -> torch.Tensor:
+# Bounded to [0, 0.5]
+def make_right_mask(W: int, H: int, percent=1.0) -> torch.Tensor:
+    assert percent <= 1.0
+    assert percent >= 0.0
     mask_right = torch.zeros(H, W, dtype=bool)
-    mask_right[:, int(W // 2) :] = 1
+    mask_right[:, int(W // 2 + (W // 2) * (1 - percent)) :] = 1
     return mask_right
+
+
+# Bounded to [0, 0.5]
+def make_top_mask(W: int, H: int, percent=1.0) -> torch.Tensor:
+    assert percent <= 1.0
+    assert percent >= 0.0
+    mask_top = torch.zeros(H, W, dtype=bool)
+    mask_top[0 : int(H // 2 * percent), :] = 1
+    return mask_top
+
+
+# Bounded to [0, 0.5]
+def make_bottom_mask(W: int, H: int, percent=1.0) -> torch.Tensor:
+    assert percent <= 1.0
+    assert percent >= 0.0
+    mask_bottom = torch.zeros(H, W, dtype=bool)
+    mask_bottom[int(H // 2 + (H // 2) * (1 - percent)) :, :] = 1
+    return mask_bottom
+
+
+# Bounded to [0, 0.5]
+def make_centre_horizontal_mask(W: int, H: int, percent=1.0) -> torch.Tensor:
+    assert percent <= 1.0
+    assert percent >= 0.0
+    mask_centre_horizontal = torch.zeros(H, W, dtype=bool)
+    mask_centre_horizontal[
+        int(H / 2 - (H / 2) * (percent)) : int(H / 2 + (H / 2) * (percent)),
+        :,
+    ] = 1
+    return mask_centre_horizontal
+
+
+# Bounded to [0, 1]
+def make_centre_vertical_mask(W: int, H: int, percent=1.0) -> torch.Tensor:
+    assert percent <= 1.0
+    assert percent >= 0.0
+    mask_centre_vertical = torch.zeros(H, W, dtype=bool)
+    mask_centre_vertical[
+        :,
+        int(W / 2 - (W / 2) * (percent)) : int(W / 2 + (W / 2) * (percent)),
+    ] = 1
+    return mask_centre_vertical
 
 
 def make_true_mask(W: int, H: int) -> torch.Tensor:
