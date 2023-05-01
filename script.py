@@ -13,8 +13,13 @@ from tqdm.auto import tqdm
 from transformers import CLIPModel, CLIPTextModel, CLIPTokenizer
 
 
-# rewrites CrossAttention._sliced_attention and CrossAttention._attention.
+# Overwrites CrossAttention._sliced_attention and CrossAttention._attention for all modules of the u-net
 def init_attention_func(unet, vae, clip, device, clip_tokenizer):
+    """Drop-in replacement for CrossAttention._attention, which ignores the key and value arguments and instead uses hardcoded
+    prompt embeddings from self.mapping.
+    Returns the hidden states of the attention layer, i.e. it returns a convex combination over projected prompt embeddings
+    (with the convex coefficients being the attention probabilities)."""
+
     def new_attention(self: "CrossAttention", query, key, value):
         del (
             key,
@@ -22,9 +27,6 @@ def init_attention_func(unet, vae, clip, device, clip_tokenizer):
         )  # We ignore these arguments! Instead, we accept them as hardcoded instance variables in `self.mapping`.
         ## query shape: (B*H, n_pixels, dim_head)
         ## key.T shape: (B*H, dim_head, T)
-
-        # TODO: Check whether `forward` uses context. This would explain why changing the hidden_state argument unexpectedly
-        #       causes changes.
 
         n_pixels = query.shape[1]
         W = H = int(n_pixels**0.5)
@@ -35,23 +37,29 @@ def init_attention_func(unet, vae, clip, device, clip_tokenizer):
         for prompt_emb, mask_fn in self.mappings:
             mask = mask_fn(W, H)
             mask = mask.reshape(1, n_pixels, 1)
-            mask.to(device)
+            mask = mask.to(device)
+            # TODO: discuss whether chopping the pixel space is equivalent to masking the attention scores.
 
+            # reshape_heads: (B, H, n_pixels, dim_head) => (B*H, n_pixels, dim_head)
             k = self.reshape_heads_to_batch_dim(
                 self.to_k(prompt_emb)
             )  # Project the prompt embedding to the key space (including multiple heads).
             v = self.reshape_heads_to_batch_dim(
                 self.to_v(prompt_emb)
             )  # Project the prompt embedding to the key space (including multiple heads).
+
             scores = (
                 torch.matmul(query, k.transpose(-1, -2)) * self.scale
             )  ## shape: (batch*n_heads, n_pixels, seq_len)
-            mask = einops.repeat(
-                mask, "1 P 1 -> B P T", B=scores.shape[0], T=scores.shape[2]
-            )  # Expand indices for indexing two lines down.
-            scores[~mask] = -float("inf")
+            # mask = einops.repeat(mask, "1 P 1 -> B P T", B=scores.shape[0], T=scores.shape[2])  # Expand indices for indexing two lines down.
+            # scores[~mask] = -float("inf")
+            # attn_probs[~mask] = 0  # Replace nans with 0s.
+
+            # softmax over the prompt tokens
             attn_probs = scores.softmax(dim=-1)
-            attn_probs[~mask] = 0  # Replace nans with 0s.
+            # Later: try attn_probs
+            attn_probs *= mask
+
             hidden_states += torch.matmul(
                 attn_probs, v
             )  # Reshape attn_slice (BH, 1, T)  => (BH, T, 1)
