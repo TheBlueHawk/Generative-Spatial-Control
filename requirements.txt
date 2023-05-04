@@ -1,4 +1,4 @@
 pre-commit
-diffusers
+diffusers==0.4.1
 accelerate
 transformers
