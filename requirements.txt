@@ -2,3 +2,11 @@ pre-commit
 diffusers==0.4.1
 accelerate
 transformers
+ipython
+ipykernel
+torch
+torchvision
+einops
+tqdm
+accelerate
+scipy
