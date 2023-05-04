@@ -207,7 +207,7 @@ def stablediffusion(
                     module.mappings = (
                         (left_emb, partial(make_left_mask, percent=0.8)),
                         (right_emb, partial(make_right_mask, percent=0.8)),
-                        (neg_embed_c, partial(make_centre_vertical_mask, percent=0.2)),
+                        (uncond_emb, partial(make_centre_vertical_mask, percent=0.2)),
                     )
                 else:
                     module.mappings = None
