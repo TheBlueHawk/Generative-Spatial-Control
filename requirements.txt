@@ -10,3 +10,4 @@ einops
 tqdm
 accelerate
 scipy
+openai
