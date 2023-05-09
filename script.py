@@ -83,11 +83,72 @@ def init_attention_func(unet, vae, clip, device, clip_tokenizer):
             )
             module._attention = new_attention.__get__(module, type(module))
 
+def _get_prompt_emb(prompt, clip, clip_tokenizer, device):
+    tokens_conditional = clip_tokenizer(
+        prompt,
+        padding="max_length",
+        max_length=clip_tokenizer.model_max_length,
+        truncation=True,
+        return_tensors="pt",
+        return_overflowing_tokens=True,
+    )
+    embedding_conditional = clip(
+        tokens_conditional.input_ids.to(device)
+    ).last_hidden_state
+    return embedding_conditional
+
+
+def left_right_exp(
+    left_prompt,
+    right_prompt,
+    *, 
+    unet,
+    vae,
+    clip,
+    device,
+    clip_tokenizer, **kwargs):
+
+    get_prompt_emb = partial(_get_prompt_emb, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
+    uncond_emb = get_prompt_emb("")
+    left_emb = get_prompt_emb(left_prompt)
+    right_emb = get_prompt_emb(right_prompt)
+    neg_embed_u = get_prompt_emb(left_prompt + right_prompt)
+    neg_embed_c = -get_prompt_emb(left_prompt + right_prompt)
+    dummy_emb = torch.zeros_like(uncond_emb).to(device)
+
+    # Assign the paired prompt embeddings and mask-making functions to each cross-attention layer.
+    # The new_attention() function will read these embeddings and masks and ignore its encoder_hidden_state argument.
+    def use_unconditional_mappings():
+        # Mapping associated with unconditional denoising.
+        for name, module in unet.named_modules():
+            if type(module).__name__ == "CrossAttention" and "attn2" in name:
+                #module.mappings = ((uncond_emb, partial(make_centre_vertical_mask, percent=0.2)),)
+                module.mappings = ((neg_embed_u, partial(make_centre_vertical_mask, percent=0.2)),
+                                    (uncond_emb, partial(make_left_mask, percent=0.8)),
+                                    (uncond_emb, partial(make_right_mask, percent=0.8)),)
+            else:
+                module.mappings = None
+
+    def use_conditional_mappings():
+        # Mapping associated with conditional denoising (includes separate left and right embeddings).
+        for name, module in unet.named_modules():
+            if type(module).__name__ == "CrossAttention" and "attn2" in name:
+                module.mappings = (
+                    (left_emb, partial(make_left_mask, percent=0.8)),
+                    (right_emb, partial(make_right_mask, percent=0.8)),
+                    (uncond_emb, partial(make_centre_vertical_mask, percent=0.2)),
+                )
+            else:
+                module.mappings = None
+
+    return stablediffusion(use_unconditional_mappings, use_conditional_mappings,
+                            unet=unet, vae=vae, clip=clip, device=device, clip_tokenizer=clip_tokenizer, **kwargs)
+                           
+
 
 @torch.no_grad()
 def stablediffusion(
-    left_prompt,
-    right_prompt,
+    uncond_hook, cond_hook,
     *,
     unet,
     vae,
@@ -161,57 +222,11 @@ def stablediffusion(
 
     # Process clip
     with autocast(device):
-
-        def get_prompt_emb(prompt):
-            tokens_conditional = clip_tokenizer(
-                prompt,
-                padding="max_length",
-                max_length=clip_tokenizer.model_max_length,
-                truncation=True,
-                return_tensors="pt",
-                return_overflowing_tokens=True,
-            )
-            embedding_conditional = clip(
-                tokens_conditional.input_ids.to(device)
-            ).last_hidden_state
-            return embedding_conditional
-
-        uncond_emb = get_prompt_emb("")
-        left_emb = get_prompt_emb(left_prompt)
-        right_emb = get_prompt_emb(right_prompt)
-        neg_embed_u = get_prompt_emb(left_prompt + right_prompt)
-        neg_embed_c = -get_prompt_emb(left_prompt + right_prompt)
-        dummy_emb = torch.zeros_like(uncond_emb).to(device)
-
+        dummy_emb = torch.zeros_like(_get_prompt_emb("", clip=clip, clip_tokenizer=clip_tokenizer, device=device)
+            ).to(device)
         init_attention_func(
             unet=unet, clip=clip, vae=vae, device=device, clip_tokenizer=clip_tokenizer
         )
-
-        # Assign the paired prompt embeddings and mask-making functions to each cross-attention layer.
-        # The new_attention() function will read these embeddings and masks and ignore its encoder_hidden_state argument.
-        def use_unconditional_mappings():
-            # Mapping associated with unconditional denoising.
-            for name, module in unet.named_modules():
-                if type(module).__name__ == "CrossAttention" and "attn2" in name:
-                    #module.mappings = ((uncond_emb, partial(make_centre_vertical_mask, percent=0.2)),)
-                    module.mappings = ((neg_embed_u, partial(make_centre_vertical_mask, percent=0.2)),
-                                       (uncond_emb, partial(make_left_mask, percent=0.8)),
-                                        (uncond_emb, partial(make_right_mask, percent=0.8)),)
-                else:
-                    module.mappings = None
-
-        def use_conditional_mappings():
-            # Mapping associated with conditional denoising (includes separate left and right embeddings).
-            for name, module in unet.named_modules():
-                if type(module).__name__ == "CrossAttention" and "attn2" in name:
-                    module.mappings = (
-                        (left_emb, partial(make_left_mask, percent=0.8)),
-                        (right_emb, partial(make_right_mask, percent=0.8)),
-                        (uncond_emb, partial(make_centre_vertical_mask, percent=0.2)),
-                    )
-                else:
-                    module.mappings = None
-
         timesteps = scheduler.timesteps[t_start:]
 
         for i, t in tqdm(enumerate(timesteps), total=len(timesteps)):
@@ -222,20 +237,19 @@ def stablediffusion(
             latent_model_input = scheduler.scale_model_input(latent_model_input, t)
 
             # Predict the unconditional noise residual
-            
-            use_unconditional_mappings()
+            # use_unconditional_mappings()
+            uncond_hook()
             noise_pred_uncond = unet(
-                latent_model_input, t, encoder_hidden_states=dummy_emb
+                latent_model_input, t, encoder_hidden_states=dummy_emb,
             ).sample
 
             # Prepare the Cross-Attention layers
             # Predict the conditional noise residual and save the cross-attention layer activations
-            use_conditional_mappings()
+            # use_conditional_mappings()
+            cond_hook()
             noise_pred_cond = unet(
-                latent_model_input, t, encoder_hidden_states=dummy_emb
+                latent_model_input, t, encoder_hidden_states=dummy_emb,
             ).sample
-            # dummy_emb is not (should not be) used in calculations since encoder_hidden_state is supposed to be ignored.
-            # TODO: sanity check -- result should be the same if we use encoder_hidden_states=left_emb too.
 
             # Perform guidance
             noise_pred = noise_pred_uncond + guidance_scale * (
@@ -315,6 +329,36 @@ def make_centre_vertical_mask(W: int, H: int, percent=1.0) -> torch.Tensor:
 
 def make_true_mask(W: int, H: int) -> torch.Tensor:
     return torch.ones(H, W, dtype=bool)
+
+
+def make_grid_mask(W: int, H: int, grid_array: list, key: str) -> torch.Tensor:
+    """
+    Given a grid_array of strings and None, like
+    grid_array = [
+        ["cat", None, "dog"],
+        ["cat", None, "dog"],
+        ["cat", None, "dog"],
+    ],
+
+    and a key "cat", we can break the image into different pieces.
+    """
+    mask = torch.zeros(H, W, dtype=bool)
+    grid_h = len(grid_array)
+    grid_w = len(grid_array[0])
+
+    found = False
+
+    for i, row in enumerate(grid_array):
+        for j, token in enumerate(row):
+            if token == key:
+                found = True
+                h_lo = int(i * H / grid_h)
+                h_hi = int((i + 1) * H / grid_h)
+                w_lo = int(j * W / grid_w)
+                w_hi = int((j + 1) * W / grid_w)
+                mask[h_lo:h_hi, w_lo:w_hi] = 1
+    assert found, f"Key {key} not found in grid_array"
+    return mask
 
 
 def load_models():
