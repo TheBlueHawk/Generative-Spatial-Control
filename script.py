@@ -145,6 +145,63 @@ def left_right_exp(
                             unet=unet, vae=vae, clip=clip, device=device, clip_tokenizer=clip_tokenizer, **kwargs)
                            
 
+def grid_exp(
+    grid_array: list,
+    *, 
+    unet,
+    vae,
+    clip,
+    device,
+    clip_tokenizer, **kwargs,
+):
+    get_prompt_emb = partial(_get_prompt_emb, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
+
+    uncond_emb = get_prompt_emb("")
+
+    def use_grid_mappings_cond():
+        mappings = []
+        keys = set()
+        for row in grid_array:
+            for k in row:
+                    keys.add(k)
+        for key in keys:
+            if key is None:
+                emb = uncond_emb
+            else:
+                emb = get_prompt_emb(key)
+            mappings.append((emb, partial(make_grid_mask, key=key, grid_array=grid_array)))
+
+        for name, module in unet.named_modules():
+            if type(module).__name__ == "CrossAttention" and "attn2" in name:
+                module.mappings = mappings
+            else:
+                module.mappings = None
+        return mappings
+
+    def use_grid_mappings_uncond():
+        mappings = []
+        keys = set()
+        for row in grid_array:
+            for k in row:
+                keys.add(k)
+        for key in keys:
+            if key is not None:
+                emb = uncond_emb
+            else:
+                emb = get_prompt_emb(" ".join([k for k in keys if k is not None]))
+            mappings.append((emb, partial(make_grid_mask, key=key, grid_array=grid_array)))
+
+        for name, module in unet.named_modules():
+            if type(module).__name__ == "CrossAttention" and "attn2" in name:
+                module.mappings = mappings
+            else:
+                module.mappings = None
+        return mappings
+
+    return stablediffusion(use_grid_mappings_uncond, use_grid_mappings_cond,
+                           unet=unet, vae=vae, clip=clip, device=device, clip_tokenizer=clip_tokenizer, **kwargs)
+
+
 
 @torch.no_grad()
 def stablediffusion(
@@ -399,9 +456,8 @@ def load_models():
 
 def main():
     unet, vae, clip, clip_tokenizer, device = load_models()
-    stablediffusion(
-        "a cat",
-        "a dog",
+    grid_exp(
+        grid_array=[["cat", None, "dog"]],
         unet=unet,
         vae=vae,
         device=device,
