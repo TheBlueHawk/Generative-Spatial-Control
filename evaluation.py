@@ -2,34 +2,34 @@ import random
 
 from PIL import Image
 import torch
-from pathlib import Path
+import pathlib
 import matplotlib.pyplot as plt
 import numpy as np
 
 from transformers import OwlViTProcessor, OwlViTForObjectDetection
 
 # dump 80 MSCOCO object categories here for quick reference
-categories = 'person, bicycle, car, motorcycle, airplane,' \
-             'bus, train, truck, boat, traffic light,' \
-             'fire hydrant, stop sign, parking meter,' \
-             'bench, bird, cat, dog, horse, sheep, cow,' \
-             'elephant, bear, zebra, giraffe, backpack,' \
-             'umbrella, handbag, tie, suitcase, frisbee,' \
-             'skis, snowboard, sports ball, kite,' \
-             'baseball bat, baseball glove, skateboard,' \
+categories = 'person, bicycle, car, motorcycle, airplane, ' \
+             'bus, train, truck, boat, traffic light, ' \
+             'fire hydrant, stop sign, parking meter, ' \
+             'bench, bird, cat, dog, horse, sheep, cow, ' \
+             'elephant, bear, zebra, giraffe, backpack, ' \
+             'umbrella, handbag, tie, suitcase, frisbee, ' \
+             'skis, snowboard, sports ball, kite, ' \
+             'baseball bat, baseball glove, skateboard, ' \
              'surfboard, tennis racket, bottle, wine' \
-             'glass, cup, fork, knife, spoon, bowl,' \
-             'banana, apple, sandwich, orange, broccoli,' \
-             'carrot, hot dog, pizza, donut, cake, chair,' \
-             'couch, potted plant, bed, dining table,' \
-             'toilet, tv, laptop, mouse, remote, keyboard,' \
-             'cell phone, microwave, oven, toaster, sink,' \
-             'refrigerator, book, clock, vase, scissors,' \
-             'teddy bear, hair drier, toothbrush'.split(",")
+             'glass, cup, fork, knife, spoon, bowl, ' \
+             'banana, apple, sandwich, orange, broccoli, ' \
+             'carrot, hot dog, pizza, donut, cake, chair, ' \
+             'couch, potted plant, bed, dining table, ' \
+             'toilet, tv, laptop, mouse, remote, keyboard, ' \
+             'cell phone, microwave, oven, toaster, sink, ' \
+             'refrigerator, book, clock, vase, scissors, ' \
+             'teddy bear, hair drier, toothbrush'.split(", ")
 
-super_categories = 'person, vehicle, outdoor, animal, accessory,' \
-                   'sports, kitchen, food, furniture,' \
-                   'electronic, appliance, indoor'.split(",")
+super_categories = 'person, vehicle, outdoor, animal, accessory, ' \
+                   'sports, kitchen, food, furniture, ' \
+                   'electronic, appliance, indoor'.split(", ")
 
 
 relationships = ["to the left of", "to the right of", "above", "below"]
