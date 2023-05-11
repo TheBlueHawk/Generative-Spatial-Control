@@ -1,6 +1,5 @@
 import random
 
-import requests
 from PIL import Image
 import torch
 from pathlib import Path
