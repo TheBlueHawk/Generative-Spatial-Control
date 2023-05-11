@@ -78,7 +78,7 @@ def dump_prompts_to_file(prompts, file_name):
             file.write(prompt + "\n")
 
 
-def visualize_bounding_boxes(coords, scores, labels, img, save=False, out_name=None):
+def visualize_bounding_boxes(coords, scores, labels, img, out_path: pathlib.Path = None):
     """
         given a list of box coordinates, confidence scores, labels and a PIL image {img},
         compute the centroids of the boxes
@@ -126,9 +126,11 @@ def visualize_bounding_boxes(coords, scores, labels, img, save=False, out_name=N
         )
 
     # Show the image with bounding boxes and centroids
-    if save:
-        assert out_name is not None
-        plt.savefig(f"detection/{out_name}.png")
+    if out_path is not None:
+        out_path = pathlib.Path(out_path)
+        out_path = out_path.with_suffix(".png")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(str(out_path))
 
     plt.show()
 
@@ -138,8 +140,8 @@ if __name__ == "__main__":
     # tutorials here: https://huggingface.co/docs/transformers/model_doc/owlvit
 
     # instantiate model and load images
-    path = Path("outputs/empty_string_middle_prompt")
-    files = [f for f in path.glob("*.png")]
+    img_dir = pathlib.Path("outputs/neg_prompt_v3")  # Path to your directory containing cat-dog images.
+    files = [f for f in img_dir.glob("*.png")]
 
     processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch32")
     model = OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch32")
@@ -178,5 +180,4 @@ if __name__ == "__main__":
                                  scores=confidence_scores,
                                  labels=confident_labels,
                                  img=image,
-                                 save=True,
-                                 out_name=f"sample_{l}")
+                                 out_path=f"outputs/detection/sample_{l}.png")
