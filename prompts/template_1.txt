@@ -1,0 +1,102 @@
+I need to map different objects in a description of an image to a NxN grid. Each cell of the grid can be assigned to an object or Empty.
+I will give you the image description and you should respond with
+(1) first a JSON object containing an array representation of the NxN grid and your reasoning.
+(2) second a text representation of the NxN grid.
+
+Example Input 1:
+```
+ Description: "A cat on the left and a dog on the right"
+ N=4
+```
+
+Example Output 1:
+```
+{{
+“reasoning_objects”: “There is a Cat and there is a Dog”,
+“reasoning_horizontal”: “From left to right, we have the Cat and then the Dog.”,
+"grid_text": "| Empty | Empty | Dog | Dog |\n| Cat | Cat | Dog | Dog |\n| Cat | Cat | Dog | Dog |\n| Cat | Cat | Dog | Dog |"
+"grid": [["cat", "cat", "dog", "dog"], ["cat", "cat", "dog", "dog"], ["cat", "cat", "dog", "dog"], ["cat", "cat", "dog", "dog"]],
+"prompt": "A cat on the left and a dog on the right",
+"N": 5
+}}
+
+| Empty | Empty | Dog | Dog |
+| Cat | Cat | Dog | Dog |
+| Cat | Cat | Dog | Dog |
+| Cat | Cat | Dog | Dog |
+```
+
+Example Input 2:
+```
+Description: ”A cat on top of a book on top of a large table”
+N=5
+```
+
+Example Output 2:
+```
+{{
+“reasoning_objects”: “There is a Cat, a Book, and a Table”,
+“reasoning_horizontal”: “From top to bottom, we have the Cat, the Book, and the Table.”,
+"grid_text": "| Cat | Cat | Empty | Empty| Empty |\n| Cat | Cat | Empty | Empty | Empty |\n| Book | Book | Empty | Empty | Empty |\n| Table | Table | Table | Table | Table |\n| Table | Table | Table | Table | Table |"
+"grid": [["cat", "cat", "empty", "empty", “empty”], ["cat", "cat", "empty", "empty", “empty”], ["book", "book", “empty”, "empty", "empty"], [“table", "table", "table", "table", “table”], [“table", "table", "table", "table", “table”]],
+"prompt": "A cat on top of a book on top of a large table",
+"N": 5
+}}
+
+```
+
+The following examples will show the grid visualization for brevity, but for your responses, please remember include the JSON output.
+
+Example Input 3: "4 cats in each corner starting at the dog in the middle"
+Output:
+| Cat | Empty | Empty | Cat |
+| Empty | Dog | Dog | Empty |
+| Empty | Dog | Dog | Empty |
+| Cat | Empty | Empty | Cat |
+
+
+Example Input 4: "A flock of birds flying above the mountains, a river in the foreground"
+Output:
+| Birds | Birds | Birds | Birds |
+| Mountains | Mountains | Mountains | Mountains |
+| River | River | River | River |
+| Empty | Empty | Empty | Empty |
+
+
+
+Example Input 5: "A single bird  flying above the mountains, a river in the foreground"
+Output:
+| Bird | Mountains | Mountains | Empty |
+| Empty | Mountains | Mountains | Empty |
+| River | River | River | River |
+| Empty | Empty | Empty | Empty |
+
+
+Example Input 6: "Two birds  flying above the mountains, a river in the foreground"
+Output: | Bird | Bird | Mountains | Mountains |
+| Empty | Empty | Mountains | Mountains |
+| River | River | River | River |
+| Empty | Empty | Empty | Empty |
+
+
+Example Input 7: "Three birds  flying above the mountains, a river in the foreground"
+Output: | Bird | Bird | Bird | Mountains |
+| Empty | Empty | Empty | Mountains |
+| River | River | River | River |
+| Empty | Empty | Empty | Empty |
+
+
+Example Input 8: "Five birds flying above the mountains, a river in the foreground"
+Output: | Bird | Bird | Bird | Bird |
+| Bird | Mountains | Mountains | Mountains |
+| Empty | River | River | River |
+| Empty | Empty | Empty | Empty |
+
+
+Now please respond to the following input:
+
+Input:
+```
+Description: {description}
+N={N}
+```
