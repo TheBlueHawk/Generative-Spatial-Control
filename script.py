@@ -11,6 +11,7 @@ from PIL import Image
 from torch import autocast
 from tqdm.auto import tqdm
 from transformers import CLIPModel, CLIPTextModel, CLIPTokenizer
+from typing import List
 
 
 # Overwrites CrossAttention._sliced_attention and CrossAttention._attention for all modules of the u-net
@@ -106,15 +107,22 @@ def left_right_exp(
     vae,
     clip,
     device,
-    clip_tokenizer, **kwargs):
+    clip_tokenizer, transpose=False, batch_size=1, **kwargs):
+    kwargs["batch_size"] = batch_size
+    def get_prompt_emb(prompt):
+        emb = _get_prompt_emb(prompt, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
+        return emb.expand(batch_size, -1, -1)
 
-    get_prompt_emb = partial(_get_prompt_emb, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
     uncond_emb = get_prompt_emb("")
     left_emb = get_prompt_emb(left_prompt)
     right_emb = get_prompt_emb(right_prompt)
     neg_embed_u = get_prompt_emb(left_prompt + right_prompt)
     neg_embed_c = -get_prompt_emb(left_prompt + right_prompt)
     dummy_emb = torch.zeros_like(uncond_emb).to(device)
+
+    # If transpose=True, wrap each tensor in a wrap_transpose() call.
+    # This changes left-right relationship to top-bottom relationship.
+    T = wrap_transpose if transpose else lambda x: x
 
     # Assign the paired prompt embeddings and mask-making functions to each cross-attention layer.
     # The new_attention() function will read these embeddings and masks and ignore its encoder_hidden_state argument.
@@ -123,9 +131,9 @@ def left_right_exp(
         for name, module in unet.named_modules():
             if type(module).__name__ == "CrossAttention" and "attn2" in name:
                 #module.mappings = ((uncond_emb, partial(make_centre_vertical_mask, percent=0.2)),)
-                module.mappings = ((neg_embed_u, partial(make_centre_vertical_mask, percent=0.2)),
-                                    (uncond_emb, partial(make_left_mask, percent=0.8)),
-                                    (uncond_emb, partial(make_right_mask, percent=0.8)),)
+                module.mappings = ((neg_embed_u, T(partial(make_centre_vertical_mask, percent=0.2))),
+                                    (uncond_emb, T(partial(make_left_mask, percent=0.8))),
+                                    (uncond_emb, T(partial(make_right_mask, percent=0.8))),)
             else:
                 module.mappings = None
 
@@ -134,15 +142,18 @@ def left_right_exp(
         for name, module in unet.named_modules():
             if type(module).__name__ == "CrossAttention" and "attn2" in name:
                 module.mappings = (
-                    (left_emb, partial(make_left_mask, percent=0.8)),
-                    (right_emb, partial(make_right_mask, percent=0.8)),
-                    (uncond_emb, partial(make_centre_vertical_mask, percent=0.2)),
+                    (left_emb, T(partial(make_left_mask, percent=0.8))),
+                    (right_emb, T(partial(make_right_mask, percent=0.8))),
+                    (uncond_emb, T(partial(make_centre_vertical_mask, percent=0.2))),
                 )
             else:
                 module.mappings = None
 
     return stablediffusion(use_unconditional_mappings, use_conditional_mappings,
                             unet=unet, vae=vae, clip=clip, device=device, clip_tokenizer=clip_tokenizer, **kwargs)
+
+def top_bottom_exp(top_prompt, bottom_prompt, **kwargs):
+    return left_right_exp(top_prompt, bottom_prompt, transpose=True, **kwargs)
                            
 
 def grid_exp(
@@ -152,9 +163,12 @@ def grid_exp(
     vae,
     clip,
     device,
-    clip_tokenizer, **kwargs,
-):
-    get_prompt_emb = partial(_get_prompt_emb, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
+    clip_tokenizer, batch_size=1, **kwargs,
+) -> List[Image]:
+    kwargs["batch_size"] = batch_size
+    def get_prompt_emb(prompt):
+        emb = _get_prompt_emb(prompt, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
+        return emb.expand(batch_size, -1, -1)
 
     uncond_emb = get_prompt_emb("")
 
@@ -202,7 +216,6 @@ def grid_exp(
                            unet=unet, vae=vae, clip=clip, device=device, clip_tokenizer=clip_tokenizer, **kwargs)
 
 
-
 @torch.no_grad()
 def stablediffusion(
     uncond_hook, cond_hook,
@@ -219,8 +232,8 @@ def stablediffusion(
     height=512,
     init_image=None,
     init_image_strength=0.5,
-    save_attentions=False
-):
+    batch_size=1,
+) -> List[Image]:
     # Change size to multiple of 64 to prevent size mismatches inside model
     width = width - width % 64
     height = height - height % 64
@@ -260,13 +273,16 @@ def stablediffusion(
             init_latent = (
                 vae.encode(init_image).latent_dist.sample(generator=generator) * 0.18215
             )
+        if batch_size != 1:
+            # Just need to repeat the latent or something.
+            raise NotImplementedError("Batch size > 1 is not supported yet for img2img.")
 
         t_start = steps - int(
             steps * init_image_strength
         )  # Nice, we start from image latent.
     else:
         init_latent = torch.zeros(
-            (1, unet.in_channels, height // 8, width // 8), device=device
+            (batch_size, unet.in_channels, height // 8, width // 8), device=device
         )
         t_start = 0
 
@@ -318,10 +334,12 @@ def stablediffusion(
         latent = latent / 0.18215
         image = vae.decode(latent.to(vae.dtype)).sample
 
+    assert batch_size >= 1
+    # Same thing as before, but image is a batch of images
     image = (image / 2 + 0.5).clamp(0, 1)
     image = image.cpu().permute(0, 2, 3, 1).numpy()
-    image = (image[0] * 255).round().astype("uint8")
-    return Image.fromarray(image)
+    image = (image * 255).round().astype("uint8")
+    return [Image.fromarray(img) for img in image]
 
 
 # Bounded to [0, 0.5]
@@ -388,7 +406,13 @@ def make_true_mask(W: int, H: int) -> torch.Tensor:
     return torch.ones(H, W, dtype=bool)
 
 
-def make_grid_mask(W: int, H: int, grid_array: list, key: str) -> torch.Tensor:
+def wrap_transpose(make_mask_fn) -> torch.Tensor:
+    def inner(W: int, H: int):
+        return torch.transpose(make_mask_fn(W, H), 0, 1)
+    return inner
+
+
+def make_grid_mask(W: int, H: int, grid_array: list, key: str, percent=0.0) -> torch.Tensor:
     """
     Given a grid_array of strings and None, like
     grid_array = [
@@ -456,14 +480,15 @@ def load_models():
 
 def main():
     unet, vae, clip, clip_tokenizer, device = load_models()
-    grid_exp(
-        grid_array=[["cat", None, "dog"]],
+    # img = grid_exp(grid_array=[["cat", None, "dog"]],
+    img = top_bottom_exp("cat", "dog",
         unet=unet,
         vae=vae,
         device=device,
         clip=clip,
         clip_tokenizer=clip_tokenizer,
         seed=248396402679,
+        batch_size=2,
     )
 
 
