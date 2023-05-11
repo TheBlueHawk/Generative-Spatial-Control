@@ -69,6 +69,16 @@ def generate_prompts(categories, with_self=False):
     return prompts
 
 
+def get_random_prompt(categories):
+    """Get a random prompt. Self-pairing is not allowed."""
+    category_a = random.choice(categories)
+    category_b = random.choice(categories)
+    while category_a == category_b:
+        category_b = random.choice(categories)
+    prompt = generate_prompt(category_a, category_b)
+    return prompt
+
+
 def dump_prompts_to_file(prompts, file_name):
     """
         dumps generated prompt to file
