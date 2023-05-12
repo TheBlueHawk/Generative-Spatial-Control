@@ -17,7 +17,7 @@ Example Output 1:
 "grid_text": "| Empty | Empty | Dog | Dog |\n| Cat | Cat | Dog | Dog |\n| Cat | Cat | Dog | Dog |\n| Cat | Cat | Dog | Dog |"
 "grid": [["cat", "cat", "dog", "dog"], ["cat", "cat", "dog", "dog"], ["cat", "cat", "dog", "dog"], ["cat", "cat", "dog", "dog"]],
 "prompt": "A cat on the left and a dog on the right",
-"N": 5
+"N": 4
 }}
 
 | Empty | Empty | Dog | Dog |
