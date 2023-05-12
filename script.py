@@ -205,7 +205,7 @@ def grid_exp(
     clip,
     device,
     clip_tokenizer, batch_size=1, **kwargs,
-) -> List[Image]:
+) -> List[Image.Image]:
     kwargs["batch_size"] = batch_size
     def get_prompt_emb(prompt):
         emb = _get_prompt_emb(prompt, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
@@ -274,7 +274,7 @@ def stablediffusion(
     init_image=None,
     init_image_strength=0.5,
     batch_size=1,
-) -> List[Image]:
+) -> List[Image.Image]:
     # Change size to multiple of 64 to prevent size mismatches inside model
     width = width - width % 64
     height = height - height % 64
