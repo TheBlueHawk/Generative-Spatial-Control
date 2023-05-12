@@ -99,6 +99,47 @@ def _get_prompt_emb(prompt, clip, clip_tokenizer, device):
     return embedding_conditional
 
 
+def baseline_exp(
+    prompt,
+    *, 
+    unet,
+    vae,
+    clip,
+    device,
+    clip_tokenizer, transpose=False, batch_size=1, **kwargs):
+    kwargs["batch_size"] = batch_size
+    def get_prompt_emb(prompt):
+        emb = _get_prompt_emb(prompt, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
+        return emb.expand(batch_size, -1, -1)
+
+    uncond_emb = get_prompt_emb("")
+    emb = get_prompt_emb(prompt)
+
+    # If transpose=True, wrap each tensor in a wrap_transpose() call.
+    # This changes left-right relationship to top-bottom relationship.
+    T = wrap_transpose if transpose else lambda x: x
+
+    # Assign the paired prompt embeddings and mask-making functions to each cross-attention layer.
+    # The new_attention() function will read these embeddings and masks and ignore its encoder_hidden_state argument.
+    def use_unconditional_mappings():
+        # Mapping associated with unconditional denoising.
+        for name, module in unet.named_modules():
+            if type(module).__name__ == "CrossAttention" and "attn2" in name:
+                module.mappings = ((uncond_emb, T(partial(make_true_mask))),)
+            else:
+                module.mappings = None
+
+    def use_conditional_mappings():
+        # Mapping associated with conditional denoising (includes separate left and right embeddings).
+        for name, module in unet.named_modules():
+            if type(module).__name__ == "CrossAttention" and "attn2" in name:
+                module.mappings = ((emb, T(partial(make_true_mask))),)
+            else:
+                module.mappings = None
+
+    return stablediffusion(use_unconditional_mappings, use_conditional_mappings,
+                            unet=unet, vae=vae, clip=clip, device=device, clip_tokenizer=clip_tokenizer, **kwargs)
+
 def left_right_exp(
     left_prompt,
     right_prompt,
