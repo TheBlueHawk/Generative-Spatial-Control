@@ -253,9 +253,8 @@ def compute_VISOR_score(text, image_size, coords, scores, labels, experiment="ba
 
 if __name__ == "__main__":
     experiment = "left_right_exp" # "baseline_exp", "top_bottom_exp"
-    num_images = 10 # Total number of images to test on
+    num_prompts = 5 # Total number of prompts to test on
     images_per_prompt = 2 # Number of images to generate per prompt
-    assert num_images%images_per_prompt == 0 # Number of images should be a multiple of images per prompt
     
     # We use OWL-ViT as the object detector
     # Tutorials here: https://huggingface.co/docs/transformers/model_doc/owlvit
@@ -267,7 +266,7 @@ if __name__ == "__main__":
     # Perform detection and scoring
     oa = []
     visor = []
-    for prompt_num in range(int(num_images/images_per_prompt)):
+    for prompt_num in range(num_prompts):
         # Generate a random prompt
         prompt = get_random_prompt(categories=categories, experiment=experiment)
         print("Prompt: " + prompt[2])
