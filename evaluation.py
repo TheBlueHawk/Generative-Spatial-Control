@@ -191,19 +191,17 @@ def visualize_bounding_boxes(coords, scores, labels, img, out_path: pathlib.Path
 
     plt.show()
 
+# Computes OA score
 def compute_OA_score(text, labels):
-    if len(set(labels)) == len(text):
-        return 1
-    else:
-        return 0 
-
-def compute_OA_value(text, labels):
+    # no need to check for placement, just the presence of all objects
     if len(set(labels)) == len(text):
         return 1
     else:
         return 0
 
-def compute_VISOR_value(text, image_size, coords, scores, labels, experiment="baseline_exp"):
+# Computes VISOR score
+def compute_VISOR_score(text, image_size, coords, scores, labels, experiment="baseline_exp"):
+    # if baseline experiment, no need to check for placement, just the presence of all objects
     if experiment == "baseline_exp":
         if len(set(labels)) == len(text):
             return 1
@@ -227,6 +225,8 @@ def compute_VISOR_value(text, image_size, coords, scores, labels, experiment="ba
 
                     # Calculate centroid coordinates
                     centroid = (x1 + (width / 2), y1 + (height / 2))
+
+                    # Check if the centroid lies in correct part of the image based on exp.
                     if experiment == "left_right_exp":
                         if i == 0:
                             if centroid[0] <= image_size[0]/2:
@@ -248,36 +248,33 @@ def compute_VISOR_value(text, image_size, coords, scores, labels, experiment="ba
             if correct != 1:
                 # Missed this object in the image
                 return 0
+        # No objects missed
         return 1
 
 if __name__ == "__main__":
     experiment = "left_right_exp" # "baseline_exp", "top_bottom_exp"
-    num_images = 10
-    images_per_prompt = 2
+    num_images = 10 # Total number of images to test on
+    images_per_prompt = 2 # Number of images to generate per prompt
     assert num_images%images_per_prompt == 0 # Number of images should be a multiple of images per prompt
     
-    # we use OWL-ViT as the object detector
-    # tutorials here: https://huggingface.co/docs/transformers/model_doc/owlvit
+    # We use OWL-ViT as the object detector
+    # Tutorials here: https://huggingface.co/docs/transformers/model_doc/owlvit
 
     # instantiate model and load images
-    img_dir = pathlib.Path(f"outputs/{experiment}")  # Path to your directory containing cat-dog images.
-    files = [f for f in img_dir.glob("*.png")]
-    
-    def original_file_number(file):
-        return int(str(file).split('/')[-1].split('.png')[0])
-    files.sort(key=original_file_number)
-
     processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch32")
     model = OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch32")
 
-    # perform detection and scoring
+    # Perform detection and scoring
     oa = []
     visor = []
     for prompt_num in range(int(num_images/images_per_prompt)):
+        # Generate a random prompt
         prompt = get_random_prompt(categories=categories, experiment=experiment)
         print("Prompt: " + prompt[2])
+        # Generate images_per_prompt images for prompt
         generate_sd_images(prompt, prompt_num, images_per_prompt, experiment=experiment)
         
+        # For each image, do object detection and computer OA/VISOR score
         for image_num in range(prompt_num*images_per_prompt, prompt_num*images_per_prompt + images_per_prompt):
             image = Image.open(f"outputs/{experiment}/{image_num}.png")
             texts = [[prompt[0], prompt[1]]]
@@ -294,7 +291,7 @@ if __name__ == "__main__":
             text = texts[i]
             boxes, scores, labels = results[i]["boxes"], results[i]["scores"], results[i]["labels"]
 
-            # visualize bounding boxes
+            # Visualize bounding boxes
             score_threshold = 0.1
             box_coords = []
             confidence_scores = []
@@ -316,10 +313,10 @@ if __name__ == "__main__":
             # Compute OA and VISOR scores
             print()
             print("Image number: " + str(image_num))
-            print("OA score: " + str(compute_OA_value(text, confident_labels)))
-            oa.append(compute_OA_value(text, confident_labels))
-            print("VISOR score: " + str(compute_VISOR_value(text, target_sizes, box_coords, confidence_scores, confident_labels, experiment=experiment)))
-            visor.append(compute_VISOR_value(text, target_sizes, box_coords, confidence_scores, confident_labels, experiment=experiment))
+            print("OA score: " + str(compute_OA_score(text, confident_labels)))
+            oa.append(compute_OA_score(text, confident_labels))
+            print("VISOR score: " + str(compute_VISOR_score(text, target_sizes, box_coords, confidence_scores, confident_labels, experiment=experiment)))
+            visor.append(compute_VISOR_score(text, target_sizes, box_coords, confidence_scores, confident_labels, experiment=experiment))
             print()
     print("Overall OA score: " + str(round(np.mean(np.array(oa)), 2)))
     print("Overall VISOR score: " + str(round(np.mean(np.array(visor)), 2)))
