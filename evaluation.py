@@ -1,4 +1,6 @@
+# Import libraries
 import random
+import os
 
 from PIL import Image
 import torch
@@ -7,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from transformers import OwlViTProcessor, OwlViTForObjectDetection
+from script import *
 
 # dump 80 MSCOCO object categories here for quick reference
 categories = 'person, bicycle, car, motorcycle, airplane, ' \
@@ -31,21 +34,23 @@ super_categories = 'person, vehicle, outdoor, animal, accessory, ' \
                    'sports, kitchen, food, furniture, ' \
                    'electronic, appliance, indoor'.split(", ")
 
-
-relationships = ["to the left of", "to the right of", "above", "below"]
-
+relationships = ["to the left of", "above"]
 
 # TODO: we need to create a list of objects that belong to different categories
 #       desirably with completely different contexts
 
-# TODO: let SD generate images based on the category parings
-
-def generate_prompt(category_a, category_b):
+def generate_prompt(category_a, category_b, experiment="baseline_exp"):
     """
         takes two categories and returns a prompt that includes spatial relation between them
         the prompt is of the form "A/An <category_a> is <rel> a/an <category b>"
     """
-    relationship = random.choice(relationships)
+    
+    if experiment == "baseline_exp":
+        relationship = random.choice(relationships)
+    elif experiment == "left_right_exp":
+        relationship = "to the left of"
+    elif experiment == "top_bottom_exp":
+        relationship = "above"
 
     article_a = "an" if category_a[0].lower() in "aeiou" else "a" # h
     article_b = "an" if category_b[0].lower() in "aeiou" else "a"
@@ -54,7 +59,7 @@ def generate_prompt(category_a, category_b):
     return prompt
 
 
-def generate_prompts(categories, with_self=False):
+def generate_prompts(categories, with_self=False, experiment="baseline_exp"):
     """
         generates prompts using a list of categories
         with_self: whether to use self-pairing
@@ -64,19 +69,19 @@ def generate_prompts(categories, with_self=False):
         for j in range(i + with_self, len(categories)):
             category_a = categories[i]
             category_b = categories[j]
-            prompt = generate_prompt(category_a, category_b)
-            prompts.append(prompt)
+            prompt = generate_prompt(category_a, category_b, experiment=experiment)
+            prompts.append((category_a, category_b, prompt))
     return prompts
 
 
-def get_random_prompt(categories):
+def get_random_prompt(categories, experiment="baseline_exp"):
     """Get a random prompt. Self-pairing is not allowed."""
     category_a = random.choice(categories)
     category_b = random.choice(categories)
     while category_a == category_b:
         category_b = random.choice(categories)
-    prompt = generate_prompt(category_a, category_b)
-    return prompt
+    prompt = generate_prompt(category_a, category_b, experiment=experiment)
+    return (category_a, category_b, prompt)
 
 
 def dump_prompts_to_file(prompts, file_name):
@@ -87,6 +92,48 @@ def dump_prompts_to_file(prompts, file_name):
         for prompt in prompts:
             file.write(prompt + "\n")
 
+# TODO: let SD generate images based on the category parings
+# Generates SD image based on experiment type and prompt
+unet, vae, clip, clip_tokenizer, device = load_models()
+def generate_sd_images(prompt, prompt_num, images_per_prompt, experiment="baseline_exp"):
+    if experiment == "baseline_exp":
+        imgs = baseline_exp(prompt[2],
+            unet=unet,
+            vae=vae,
+            device=device,
+            clip=clip,
+            clip_tokenizer=clip_tokenizer,
+            seed=248396402679,
+            batch_size=images_per_prompt,
+        )
+    elif experiment == "left_right_exp":
+        imgs = left_right_exp(prompt[0], prompt[1],
+            unet=unet,
+            vae=vae,
+            device=device,
+            clip=clip,
+            clip_tokenizer=clip_tokenizer,
+            seed=248396402679,
+            batch_size=images_per_prompt,
+        )
+    elif experiment == "top_bottom_exp":
+        imgs = top_bottom_exp(prompt[0], prompt[1],
+            unet=unet,
+            vae=vae,
+            device=device,
+            clip=clip,
+            clip_tokenizer=clip_tokenizer,
+            seed=248396402679,
+            batch_size=images_per_prompt,
+        )
+    
+    if not os.path.exists(f'outputs/{experiment}'):
+        os.makedirs(f'outputs/{experiment}')
+
+    for i, img in enumerate(imgs):
+        img.save(f"outputs/{experiment}/{str(prompt_num*images_per_prompt + i)}.png")
+
+    return
 
 def visualize_bounding_boxes(coords, scores, labels, img, out_path: pathlib.Path = None):
     """
@@ -144,50 +191,135 @@ def visualize_bounding_boxes(coords, scores, labels, img, out_path: pathlib.Path
 
     plt.show()
 
+def compute_OA_score(text, labels):
+    if len(set(labels)) == len(text):
+        return 1
+    else:
+        return 0 
+
+def compute_OA_value(text, labels):
+    if len(set(labels)) == len(text):
+        return 1
+    else:
+        return 0
+
+def compute_VISOR_value(text, image_size, coords, scores, labels, experiment="baseline_exp"):
+    if experiment == "baseline_exp":
+        if len(set(labels)) == len(text):
+            return 1
+        else:
+            return 0
+    else:
+        assert len(text) == 2 # Code only works for two objects
+
+        # Convert to numpy array
+        coords = np.array(coords)
+        image_size = np.array(image_size)[0]
+
+        # Check the correctness of each object
+        for i in range(len(text)):
+            object = text[i]
+            correct = 0 # flag to check if at least one instance of object correctly placed
+            for bbox, score, label in zip(coords, scores, labels):
+                if label == object:
+                    x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+                    height, width =  abs(y2-y1), abs(x2-x1)
+
+                    # Calculate centroid coordinates
+                    centroid = (x1 + (width / 2), y1 + (height / 2))
+                    if experiment == "left_right_exp":
+                        if i == 0:
+                            if centroid[0] <= image_size[0]/2:
+                                correct = 1
+                                break
+                        else:
+                            if centroid[0] > image_size[0]/2:
+                                correct = 1
+                                break
+                    elif experiment == "top_bottom_exp":
+                        if i == 0:
+                            if centroid[1] <= image_size[1]/2:
+                                correct = 1
+                                break
+                        else:
+                            if centroid[1] > image_size[1]/2:
+                                correct = 1
+                                break
+            if correct != 1:
+                # Missed this object in the image
+                return 0
+        return 1
 
 if __name__ == "__main__":
+    experiment = "left_right_exp" # "baseline_exp", "top_bottom_exp"
+    num_images = 10
+    images_per_prompt = 2
+    assert num_images%images_per_prompt == 0 # Number of images should be a multiple of images per prompt
+    
     # we use OWL-ViT as the object detector
     # tutorials here: https://huggingface.co/docs/transformers/model_doc/owlvit
 
     # instantiate model and load images
-    img_dir = pathlib.Path("outputs/neg_prompt_v3")  # Path to your directory containing cat-dog images.
+    img_dir = pathlib.Path(f"outputs/{experiment}")  # Path to your directory containing cat-dog images.
     files = [f for f in img_dir.glob("*.png")]
+    
+    def original_file_number(file):
+        return int(str(file).split('/')[-1].split('.png')[0])
+    files.sort(key=original_file_number)
 
     processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch32")
     model = OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch32")
 
-    # save a bunch of figures
-    for l in range(5):
-        image = Image.open(files[l])
-        texts = [["cat", "dog"]] # TODO custom texts
-        inputs = processor(text=texts, images=image, return_tensors="pt")
-        outputs = model(**inputs)
+    # perform detection and scoring
+    oa = []
+    visor = []
+    for prompt_num in range(int(num_images/images_per_prompt)):
+        prompt = get_random_prompt(categories=categories, experiment=experiment)
+        print("Prompt: " + prompt[2])
+        generate_sd_images(prompt, prompt_num, images_per_prompt, experiment=experiment)
+        
+        for image_num in range(prompt_num*images_per_prompt, prompt_num*images_per_prompt + images_per_prompt):
+            image = Image.open(f"outputs/{experiment}/{image_num}.png")
+            texts = [[prompt[0], prompt[1]]]
+            inputs = processor(text=texts, images=image, return_tensors="pt")
+            outputs = model(**inputs)
 
-        # Target image sizes (height, width) to rescale box predictions [batch_size, 2]
-        target_sizes = torch.Tensor([image.size[::-1]])
+            # Target image sizes (height, width) to rescale box predictions [batch_size, 2]
+            target_sizes = torch.Tensor([image.size[::-1]])
 
-        # Convert outputs (bounding boxes and class logits) to COCO API
-        results = processor.post_process(outputs=outputs, target_sizes=target_sizes)
+            # Convert outputs (bounding boxes and class logits) to COCO API
+            results = processor.post_process(outputs=outputs, target_sizes=target_sizes)
 
-        i = 0  # Retrieve predictions for the first image for the corresponding text queries
-        text = texts[i]
-        boxes, scores, labels = results[i]["boxes"], results[i]["scores"], results[i]["labels"]
+            i = 0  # Retrieve predictions for the first image for the corresponding text queries
+            text = texts[i]
+            boxes, scores, labels = results[i]["boxes"], results[i]["scores"], results[i]["labels"]
 
-        # visualize bounding boxes
-        score_threshold = 0.1
-        box_coords = []
-        confidence_scores = []
-        confident_labels = []
-        for box, score, label in zip(boxes, scores, labels):
-            box = [round(i, 2) for i in box.tolist()]
-            if score >= score_threshold:
-                print(f"Detected {text[label]} with confidence {round(score.item(), 3)} at location {box}")
-                box_coords.append(box)
-                confidence_scores.append(round(score.item(), 3))
-                confident_labels.append(text[label])
+            # visualize bounding boxes
+            score_threshold = 0.1
+            box_coords = []
+            confidence_scores = []
+            confident_labels = []
+            for box, score, label in zip(boxes, scores, labels):
+                box = [round(i, 2) for i in box.tolist()]
+                if score >= score_threshold:
+                    # print(f"Detected {text[label]} with confidence {round(score.item(), 3)} at location {box}")
+                    box_coords.append(box)
+                    confidence_scores.append(round(score.item(), 3))
+                    confident_labels.append(text[label])
 
-        visualize_bounding_boxes(coords=box_coords,
-                                 scores=confidence_scores,
-                                 labels=confident_labels,
-                                 img=image,
-                                 out_path=f"outputs/detection/sample_{l}.png")
+            visualize_bounding_boxes(coords=box_coords,
+                                    scores=confidence_scores,
+                                    labels=confident_labels,
+                                    img=image,
+                                    out_path=f"outputs/detection/{image_num}.png")
+
+            # Compute OA and VISOR scores
+            print()
+            print("Image number: " + str(image_num))
+            print("OA score: " + str(compute_OA_value(text, confident_labels)))
+            oa.append(compute_OA_value(text, confident_labels))
+            print("VISOR score: " + str(compute_VISOR_value(text, target_sizes, box_coords, confidence_scores, confident_labels, experiment=experiment)))
+            visor.append(compute_VISOR_value(text, target_sizes, box_coords, confidence_scores, confident_labels, experiment=experiment))
+            print()
+    print("Overall OA score: " + str(round(np.mean(np.array(oa)), 2)))
+    print("Overall VISOR score: " + str(round(np.mean(np.array(visor)), 2)))
