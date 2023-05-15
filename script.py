@@ -106,7 +106,7 @@ def baseline_exp(
     vae,
     clip,
     device,
-    clip_tokenizer, transpose=False, batch_size=1, **kwargs):
+    clip_tokenizer, batch_size=1, **kwargs):
     kwargs["batch_size"] = batch_size
     def get_prompt_emb(prompt):
         emb = _get_prompt_emb(prompt, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
@@ -115,17 +115,13 @@ def baseline_exp(
     uncond_emb = get_prompt_emb("")
     emb = get_prompt_emb(prompt)
 
-    # If transpose=True, wrap each tensor in a wrap_transpose() call.
-    # This changes left-right relationship to top-bottom relationship.
-    T = wrap_transpose if transpose else lambda x: x
-
     # Assign the paired prompt embeddings and mask-making functions to each cross-attention layer.
     # The new_attention() function will read these embeddings and masks and ignore its encoder_hidden_state argument.
     def use_unconditional_mappings():
         # Mapping associated with unconditional denoising.
         for name, module in unet.named_modules():
             if type(module).__name__ == "CrossAttention" and "attn2" in name:
-                module.mappings = ((uncond_emb, T(partial(make_true_mask))),)
+                module.mappings = ((uncond_emb, make_true_mask),)
             else:
                 module.mappings = None
 
@@ -133,7 +129,7 @@ def baseline_exp(
         # Mapping associated with conditional denoising (includes separate left and right embeddings).
         for name, module in unet.named_modules():
             if type(module).__name__ == "CrossAttention" and "attn2" in name:
-                module.mappings = ((emb, T(partial(make_true_mask))),)
+                module.mappings = ((emb, make_true_mask),)
             else:
                 module.mappings = None
 
@@ -482,6 +478,12 @@ def make_grid_mask(W: int, H: int, grid_array: list, key: str, percent=0.0) -> t
     assert found, f"Key {key} not found in grid_array"
     return mask
 
+def load_models_as_dict() -> dict:
+    # TODO(shwang): I think this isn't helpful when we add models later.
+    #    we will see. If this is useful for a second model (e.g. Stable Diffusion 2.x)
+    #    then I will keep.
+    unet, vae, clip, clip_tokenizer, device = load_models()
+    return dict(unet=unet, vae=vae, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
 
 def load_models():
     # Init CLIP tokenizer and model
