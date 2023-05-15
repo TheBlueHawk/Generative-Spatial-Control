@@ -12,3 +12,6 @@ accelerate
 scipy
 openai
 matplotlib
+randomname
+black
+tqdm
