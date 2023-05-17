@@ -154,7 +154,7 @@ def left_right_exp(
     left_emb = get_prompt_emb(left_prompt)
     right_emb = get_prompt_emb(right_prompt)
     neg_embed_u = get_prompt_emb(left_prompt + right_prompt)
-    neg_embed_c = -get_prompt_emb(left_prompt + right_prompt)
+    neg_embed_c = get_prompt_emb(left_prompt + right_prompt)
     dummy_emb = torch.zeros_like(uncond_emb).to(device)
 
     # If transpose=True, wrap each tensor in a wrap_transpose() call.
@@ -192,8 +192,31 @@ def left_right_exp(
     return stablediffusion(use_unconditional_mappings, use_conditional_mappings,
                             unet=unet, vae=vae, clip=clip, device=device, clip_tokenizer=clip_tokenizer, **kwargs)
 
+
 def top_bottom_exp(top_prompt, bottom_prompt, **kwargs):
     return left_right_exp(top_prompt, bottom_prompt, transpose=True, **kwargs)
+
+
+def four_corners_exp(
+    prompt1, prompt2, prompt3, prompt4 , 
+    *, 
+    unet,
+    vae,
+    clip,
+    device,
+    clip_tokenizer, batch_size=1, neg_prompting=True, **kwargs,
+):
+    grid_arrays = [[prompt1, None, prompt2], [None, None, None], [prompt3, None, prompt4]]
+
+    return grid_exp(grid_arrays, 
+        unet=unet,
+        vae=vae,
+        clip=clip,
+        device=device,
+        clip_tokenizer=clip_tokenizer, batch_size=batch_size, neg_prompting=neg_prompting, **kwargs)
+
+# add negative prompting option to grid
+# four_corners experiment which calls grid_exp
                            
 
 def grid_exp(
@@ -203,7 +226,7 @@ def grid_exp(
     vae,
     clip,
     device,
-    clip_tokenizer, batch_size=1, **kwargs,
+    clip_tokenizer, batch_size=1, neg_prompting=True, **kwargs,
 ) -> List[Image.Image]:
     kwargs["batch_size"] = batch_size
     def get_prompt_emb(prompt):
@@ -239,7 +262,7 @@ def grid_exp(
             for k in row:
                 keys.add(k)
         for key in keys:
-            if key is not None:
+            if key is not None or not neg_prompting:
                 emb = uncond_emb
             else:
                 emb = get_prompt_emb(" ".join([k for k in keys if k is not None]))
