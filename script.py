@@ -144,7 +144,7 @@ def left_right_exp(
     vae,
     clip,
     device,
-    clip_tokenizer, transpose=False, batch_size=1, **kwargs):
+    clip_tokenizer, transpose=False, batch_size=1, divider_size=0.2, neg_prompting: bool = True, **kwargs):
     kwargs["batch_size"] = batch_size
     def get_prompt_emb(prompt):
         emb = _get_prompt_emb(prompt, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
@@ -168,9 +168,12 @@ def left_right_exp(
         for name, module in unet.named_modules():
             if type(module).__name__ == "CrossAttention" and "attn2" in name:
                 #module.mappings = ((uncond_emb, partial(make_centre_vertical_mask, percent=0.2)),)
-                module.mappings = ((neg_embed_u, T(partial(make_centre_vertical_mask, percent=0.2))),
-                                    (uncond_emb, T(partial(make_left_mask, percent=0.8))),
-                                    (uncond_emb, T(partial(make_right_mask, percent=0.8))),)
+                if neg_prompting:
+                    module.mappings = ((neg_embed_u, T(partial(make_centre_vertical_mask, percent=divider_size))),
+                                        (uncond_emb, T(partial(make_left_mask, percent=(1-divider_size)))),
+                                        (uncond_emb, T(partial(make_right_mask, percent=(1-divider_size)))),)
+                else:
+                    module.mappings = ((uncond_emb, make_true_mask),)
             else:
                 module.mappings = None
 
@@ -179,9 +182,9 @@ def left_right_exp(
         for name, module in unet.named_modules():
             if type(module).__name__ == "CrossAttention" and "attn2" in name:
                 module.mappings = (
-                    (left_emb, T(partial(make_left_mask, percent=0.8))),
-                    (right_emb, T(partial(make_right_mask, percent=0.8))),
-                    (uncond_emb, T(partial(make_centre_vertical_mask, percent=0.2))),
+                    (uncond_emb, T(partial(make_centre_vertical_mask, percent=divider_size))),
+                    (left_emb, T(partial(make_left_mask, percent=(1-divider_size)))),
+                    (right_emb, T(partial(make_right_mask, percent=(1-divider_size)))),
                 )
             else:
                 module.mappings = None

@@ -222,7 +222,7 @@ def make_unique_filename() -> str:
 
 
 def step_00_build_img_cache(
-    experiment: str = "xattn01",  # "baseline_exp", "xattn01"
+    experiment: str = "xattn01",  # "baseline_exp", "xattn01", "xattn02", "xattn03"
     num_prompts: int = 1000,
     images_per_prompt: int = 4,
 ) -> None:
@@ -234,7 +234,7 @@ def step_00_build_img_cache(
     print("Saving images to", base_dir, "...")
     model_kwargs = script.load_models_as_dict()
 
-    with tqdm.tqdm(prompts) as t:
+    with tqdm.tqdm(prompts, desc=experiment) as t:
         for vtup in t:
             img_dir = base_dir / vtup.prompt.replace(" ", "_") 
             img_dir.mkdir(parents=True, exist_ok=True)
@@ -249,7 +249,17 @@ def step_00_build_img_cache(
             if experiment == "baseline_exp":
                 imgs = script.baseline_exp(vtup.prompt, **model_kwargs,
                         batch_size=images_per_prompt)
-            elif experiment == "xattn01":
+            elif experiment.startswith("xattn"):
+                exp_kwargs = dict(
+                    # 01: Our standard method. Negative prompting and 0.2 divider between left and right.
+                    xattn01=dict(divider_size=0.2, neg_prompting=True),
+                    # 02: Same as xattn01, but with no divider.
+                    xattn02=dict(divider_size=0.0, neg_prompting=True),
+                    # 03: Same as xattn01, but with no negative prompting.
+                    xattn03=dict(divider_size=0.2, neg_prompting=False),
+                    # 04: no negative prompting, no divider
+                    xattn04=dict(divider_size=0.0, neg_prompting=False),
+                )[experiment]
                 exp_fns = dict(
                     left=script.left_right_exp,
                     right=script.left_right_exp,
@@ -266,7 +276,7 @@ def step_00_build_img_cache(
 
                 # NICETOHAVE: disable tqdm progress bar for this call, or otherwise
                 #   reduce verbosity of nested tqdm
-                imgs = exp_fn(o1, o2, **model_kwargs, batch_size=images_per_prompt)
+                imgs = exp_fn(o1, o2, **model_kwargs, batch_size=images_per_prompt, **exp_kwargs)
             else:
                 raise ValueError("Invalid experiment type:", experiment)
 
@@ -393,6 +403,9 @@ def step_02_compute_metrics_single(cached_img_dir: pathlib.Path):
 
 
 if __name__ == "__main__":
-    # build_img_cache("baseline_exp", num_prompts=100)
-    step_02_compute_metrics_single("/scratch/steven/xattn_control/outputs/cached_images/xattn01/current")
-    step_02_compute_metrics_single("/scratch/steven/xattn_control/outputs/cached_images/baseline_exp/current")
+    # step_02_compute_metrics_single("/scratch/steven/xattn_control/outputs/cached_images/xattn01/current")
+    # step_02_compute_metrics_single("/scratch/steven/xattn_control/outputs/cached_images/baseline_exp/current")
+    # step_00_build_img_cache("xattn01", num_prompts=1000)
+    step_00_build_img_cache("xattn02", num_prompts=1000)
+    step_00_build_img_cache("xattn03", num_prompts=1000)
+    step_00_build_img_cache("xattn04", num_prompts=1000)
