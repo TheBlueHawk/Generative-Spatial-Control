@@ -12,6 +12,7 @@ from PIL import Image
 from torch import autocast
 from tqdm.auto import tqdm
 from transformers import CLIPModel, CLIPTextModel, CLIPTokenizer
+from typing import List
 
 
 # Overwrites CrossAttention._sliced_attention and CrossAttention._attention for all modules of the u-net
@@ -84,11 +85,204 @@ def init_attention_func(unet, vae, clip, device, clip_tokenizer):
             )
             module._attention = new_attention.__get__(module, type(module))
 
+def _get_prompt_emb(prompt, clip, clip_tokenizer, device):
+    tokens_conditional = clip_tokenizer(
+        prompt,
+        padding="max_length",
+        max_length=clip_tokenizer.model_max_length,
+        truncation=True,
+        return_tensors="pt",
+        return_overflowing_tokens=True,
+    )
+    embedding_conditional = clip(
+        tokens_conditional.input_ids.to(device)
+    ).last_hidden_state
+    return embedding_conditional
+
+
+def baseline_exp(
+    prompt,
+    *, 
+    unet,
+    vae,
+    clip,
+    device,
+    clip_tokenizer, batch_size=1, **kwargs):
+    kwargs["batch_size"] = batch_size
+    def get_prompt_emb(prompt):
+        emb = _get_prompt_emb(prompt, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
+        return emb.expand(batch_size, -1, -1)
+
+    uncond_emb = get_prompt_emb("")
+    emb = get_prompt_emb(prompt)
+
+    # Assign the paired prompt embeddings and mask-making functions to each cross-attention layer.
+    # The new_attention() function will read these embeddings and masks and ignore its encoder_hidden_state argument.
+    def use_unconditional_mappings():
+        # Mapping associated with unconditional denoising.
+        for name, module in unet.named_modules():
+            if type(module).__name__ == "CrossAttention" and "attn2" in name:
+                module.mappings = ((uncond_emb, make_true_mask),)
+            else:
+                module.mappings = None
+
+    def use_conditional_mappings():
+        # Mapping associated with conditional denoising (includes separate left and right embeddings).
+        for name, module in unet.named_modules():
+            if type(module).__name__ == "CrossAttention" and "attn2" in name:
+                module.mappings = ((emb, make_true_mask),)
+            else:
+                module.mappings = None
+
+    return stablediffusion(use_unconditional_mappings, use_conditional_mappings,
+                            unet=unet, vae=vae, clip=clip, device=device, clip_tokenizer=clip_tokenizer, **kwargs)
+
+def left_right_exp(
+    left_prompt,
+    right_prompt,
+    *, 
+    unet,
+    vae,
+    clip,
+    device,
+    clip_tokenizer, transpose=False, batch_size=1, divider_size=0.2, neg_prompting: bool = True, **kwargs):
+    kwargs["batch_size"] = batch_size
+    def get_prompt_emb(prompt):
+        emb = _get_prompt_emb(prompt, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
+        return emb.expand(batch_size, -1, -1)
+
+    uncond_emb = get_prompt_emb("")
+    left_emb = get_prompt_emb(left_prompt)
+    right_emb = get_prompt_emb(right_prompt)
+    neg_embed_u = get_prompt_emb(left_prompt + right_prompt)
+    neg_embed_c = get_prompt_emb(left_prompt + right_prompt)
+    dummy_emb = torch.zeros_like(uncond_emb).to(device)
+
+    # If transpose=True, wrap each tensor in a wrap_transpose() call.
+    # This changes left-right relationship to top-bottom relationship.
+    T = wrap_transpose if transpose else lambda x: x
+
+    # Assign the paired prompt embeddings and mask-making functions to each cross-attention layer.
+    # The new_attention() function will read these embeddings and masks and ignore its encoder_hidden_state argument.
+    def use_unconditional_mappings():
+        # Mapping associated with unconditional denoising.
+        for name, module in unet.named_modules():
+            if type(module).__name__ == "CrossAttention" and "attn2" in name:
+                #module.mappings = ((uncond_emb, partial(make_centre_vertical_mask, percent=0.2)),)
+                if neg_prompting:
+                    module.mappings = ((neg_embed_u, T(partial(make_centre_vertical_mask, percent=divider_size))),
+                                        (uncond_emb, T(partial(make_left_mask, percent=(1-divider_size)))),
+                                        (uncond_emb, T(partial(make_right_mask, percent=(1-divider_size)))),)
+                else:
+                    module.mappings = ((uncond_emb, make_true_mask),)
+            else:
+                module.mappings = None
+
+    def use_conditional_mappings():
+        # Mapping associated with conditional denoising (includes separate left and right embeddings).
+        for name, module in unet.named_modules():
+            if type(module).__name__ == "CrossAttention" and "attn2" in name:
+                module.mappings = (
+                    (uncond_emb, T(partial(make_centre_vertical_mask, percent=divider_size))),
+                    (left_emb, T(partial(make_left_mask, percent=(1-divider_size)))),
+                    (right_emb, T(partial(make_right_mask, percent=(1-divider_size)))),
+                )
+            else:
+                module.mappings = None
+
+    return stablediffusion(use_unconditional_mappings, use_conditional_mappings,
+                            unet=unet, vae=vae, clip=clip, device=device, clip_tokenizer=clip_tokenizer, **kwargs)
+
+
+def top_bottom_exp(top_prompt, bottom_prompt, **kwargs):
+    return left_right_exp(top_prompt, bottom_prompt, transpose=True, **kwargs)
+
+
+def four_corners_exp(
+    prompt1, prompt2, prompt3, prompt4 , 
+    *, 
+    unet,
+    vae,
+    clip,
+    device,
+    clip_tokenizer, batch_size=1, neg_prompting=True, **kwargs,
+):
+    grid_arrays = [[prompt1, None, prompt2], [None, None, None], [prompt3, None, prompt4]]
+
+    return grid_exp(grid_arrays, 
+        unet=unet,
+        vae=vae,
+        clip=clip,
+        device=device,
+        clip_tokenizer=clip_tokenizer, batch_size=batch_size, neg_prompting=neg_prompting, **kwargs)
+
+# add negative prompting option to grid
+# four_corners experiment which calls grid_exp
+                           
+
+def grid_exp(
+    grid_array: list,
+    *, 
+    unet,
+    vae,
+    clip,
+    device,
+    clip_tokenizer, batch_size=1, neg_prompting=True, **kwargs,
+) -> List[Image.Image]:
+    kwargs["batch_size"] = batch_size
+    def get_prompt_emb(prompt):
+        emb = _get_prompt_emb(prompt, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
+        return emb.expand(batch_size, -1, -1)
+
+    uncond_emb = get_prompt_emb("")
+
+    def use_grid_mappings_cond():
+        mappings = []
+        keys = set()
+        for row in grid_array:
+            for k in row:
+                    keys.add(k)
+        for key in keys:
+            if key is None:
+                emb = uncond_emb
+            else:
+                emb = get_prompt_emb(key)
+            mappings.append((emb, partial(make_grid_mask, key=key, grid_array=grid_array)))
+
+        for name, module in unet.named_modules():
+            if type(module).__name__ == "CrossAttention" and "attn2" in name:
+                module.mappings = mappings
+            else:
+                module.mappings = None
+        return mappings
+
+    def use_grid_mappings_uncond():
+        mappings = []
+        keys = set()
+        for row in grid_array:
+            for k in row:
+                keys.add(k)
+        for key in keys:
+            if key is not None or not neg_prompting:
+                emb = uncond_emb
+            else:
+                emb = get_prompt_emb(" ".join([k for k in keys if k is not None]))
+            mappings.append((emb, partial(make_grid_mask, key=key, grid_array=grid_array)))
+
+        for name, module in unet.named_modules():
+            if type(module).__name__ == "CrossAttention" and "attn2" in name:
+                module.mappings = mappings
+            else:
+                module.mappings = None
+        return mappings
+
+    return stablediffusion(use_grid_mappings_uncond, use_grid_mappings_cond,
+                           unet=unet, vae=vae, clip=clip, device=device, clip_tokenizer=clip_tokenizer, **kwargs)
+
 
 @torch.no_grad()
 def stablediffusion(
-    left_prompt,
-    right_prompt,
+    uncond_hook, cond_hook,
     *,
     unet,
     vae,
@@ -102,8 +296,8 @@ def stablediffusion(
     height=512,
     init_image=None,
     init_image_strength=0.5,
-    save_attentions=False
-):
+    batch_size=1,
+) -> List[Image.Image]:
     # Change size to multiple of 64 to prevent size mismatches inside model
     width = width - width % 64
     height = height - height % 64
@@ -143,13 +337,16 @@ def stablediffusion(
             init_latent = (
                 vae.encode(init_image).latent_dist.sample(generator=generator) * 0.18215
             )
+        if batch_size != 1:
+            # Just need to repeat the latent or something.
+            raise NotImplementedError("Batch size > 1 is not supported yet for img2img.")
 
         t_start = steps - int(
             steps * init_image_strength
         )  # Nice, we start from image latent.
     else:
         init_latent = torch.zeros(
-            (1, unet.in_channels, height // 8, width // 8), device=device
+            (batch_size, unet.in_channels, height // 8, width // 8), device=device
         )
         t_start = 0
 
@@ -162,7 +359,6 @@ def stablediffusion(
 
     # Process clip
     with autocast(device):
-
         def get_prompt_emb(prompt):
             tokens_conditional = clip_tokenizer(
                 prompt,
@@ -215,6 +411,11 @@ def stablediffusion(
                 else:
                     module.mappings = None
 
+        #dummy_emb = torch.zeros_like(_get_prompt_emb("", clip=clip, clip_tokenizer=clip_tokenizer, device=device)
+        #    ).to(device)
+        #init_attention_func(
+        #    unet=unet, clip=clip, vae=vae, device=device, clip_tokenizer=clip_tokenizer
+        #)
         timesteps = scheduler.timesteps[t_start:]
 
         for i, t in tqdm(enumerate(timesteps), total=len(timesteps)):
@@ -227,18 +428,19 @@ def stablediffusion(
             # Predict the unconditional noise residual
 
             use_unconditional_mappings()
+            # uncond_hook()
+
             noise_pred_uncond = unet(
-                latent_model_input, t, encoder_hidden_states=dummy_emb
+                latent_model_input, t, encoder_hidden_states=dummy_emb,
             ).sample
 
             # Prepare the Cross-Attention layers
             # Predict the conditional noise residual and save the cross-attention layer activations
-            use_conditional_mappings()
+            # use_conditional_mappings()
+            cond_hook()
             noise_pred_cond = unet(
-                latent_model_input, t, encoder_hidden_states=dummy_emb
+                latent_model_input, t, encoder_hidden_states=dummy_emb,
             ).sample
-            # dummy_emb is not (should not be) used in calculations since encoder_hidden_state is supposed to be ignored.
-            # TODO: sanity check -- result should be the same if we use encoder_hidden_states=left_emb too.
 
             # Perform guidance
             noise_pred = noise_pred_uncond + guidance_scale * (
@@ -250,10 +452,12 @@ def stablediffusion(
         latent = latent / 0.18215
         image = vae.decode(latent.to(vae.dtype)).sample
 
+    assert batch_size >= 1
+    # Same thing as before, but image is a batch of images
     image = (image / 2 + 0.5).clamp(0, 1)
     image = image.cpu().permute(0, 2, 3, 1).numpy()
-    image = (image[0] * 255).round().astype("uint8")
-    return Image.fromarray(image)
+    image = (image * 255).round().astype("uint8")
+    return [Image.fromarray(img) for img in image]
 
 
 # Bounded to [0, 0.5]
@@ -320,6 +524,48 @@ def make_true_mask(W: int, H: int) -> torch.Tensor:
     return torch.ones(H, W, dtype=bool)
 
 
+def wrap_transpose(make_mask_fn) -> torch.Tensor:
+    def inner(W: int, H: int):
+        return torch.transpose(make_mask_fn(W, H), 0, 1)
+    return inner
+
+
+def make_grid_mask(W: int, H: int, grid_array: list, key: str, percent=0.0) -> torch.Tensor:
+    """
+    Given a grid_array of strings and None, like
+    grid_array = [
+        ["cat", None, "dog"],
+        ["cat", None, "dog"],
+        ["cat", None, "dog"],
+    ],
+
+    and a key "cat", we can break the image into different pieces.
+    """
+    mask = torch.zeros(H, W, dtype=bool)
+    grid_h = len(grid_array)
+    grid_w = len(grid_array[0])
+
+    found = False
+
+    for i, row in enumerate(grid_array):
+        for j, token in enumerate(row):
+            if token == key:
+                found = True
+                h_lo = int(i * H / grid_h)
+                h_hi = int((i + 1) * H / grid_h)
+                w_lo = int(j * W / grid_w)
+                w_hi = int((j + 1) * W / grid_w)
+                mask[h_lo:h_hi, w_lo:w_hi] = 1
+    assert found, f"Key {key} not found in grid_array"
+    return mask
+
+def load_models_as_dict() -> dict:
+    # TODO(shwang): I think this isn't helpful when we add models later.
+    #    we will see. If this is useful for a second model (e.g. Stable Diffusion 2.x)
+    #    then I will keep.
+    unet, vae, clip, clip_tokenizer, device = load_models()
+    return dict(unet=unet, vae=vae, clip=clip, clip_tokenizer=clip_tokenizer, device=device)
+
 def load_models():
     # Init CLIP tokenizer and model
     model_path_clip = "openai/clip-vit-large-patch14"
@@ -358,15 +604,15 @@ def load_models():
 
 def main():
     unet, vae, clip, clip_tokenizer, device = load_models()
-    stablediffusion(
-        "a cat",
-        "a dog",
+    # img = grid_exp(grid_array=[["cat", None, "dog"]],
+    img = top_bottom_exp("cat", "dog",
         unet=unet,
         vae=vae,
         device=device,
         clip=clip,
         clip_tokenizer=clip_tokenizer,
         seed=248396402679,
+        batch_size=2,
     )
 
 
