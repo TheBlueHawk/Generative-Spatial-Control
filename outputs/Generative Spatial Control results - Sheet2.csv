@@ -1,0 +1,6 @@
+n_samples,Neg prompting,Divider size,Experiment,VISOR,OA,OA1,OA2
+1000,,,baseline,0.067,0.1319,0.459,0.399
+1000,TRUE,0,xattn02,0.134,0.136,0.407,0.419
+500,TRUE,0.1,xattn05,0.111,0.114,0.4115,0.3845
+1000,TRUE,0.2,xattn01,0.107,0.107,0.37,0.371
+500,TRUE,0.3,xattn06,0.0635,0.064,0.2845,0.2945
