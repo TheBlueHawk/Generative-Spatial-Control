@@ -3,6 +3,7 @@
 
 import random
 from functools import partial
+
 import einops
 import numpy as np
 import torch
@@ -180,7 +181,7 @@ def stablediffusion(
         left_emb = get_prompt_emb(left_prompt)
         right_emb = get_prompt_emb(right_prompt)
         neg_embed_u = get_prompt_emb(left_prompt + right_prompt)
-        neg_embed_c = -get_prompt_emb(left_prompt + right_prompt)
+        # neg_embed_c = -get_prompt_emb(left_prompt + right_prompt)
         dummy_emb = torch.zeros_like(uncond_emb).to(device)
 
         init_attention_func(
@@ -193,10 +194,12 @@ def stablediffusion(
             # Mapping associated with unconditional denoising.
             for name, module in unet.named_modules():
                 if type(module).__name__ == "CrossAttention" and "attn2" in name:
-                    #module.mappings = ((uncond_emb, partial(make_centre_vertical_mask, percent=0.2)),)
-                    module.mappings = ((neg_embed_u, partial(make_centre_vertical_mask, percent=0.2)),
-                                       (uncond_emb, partial(make_left_mask, percent=0.8)),
-                                        (uncond_emb, partial(make_right_mask, percent=0.8)),)
+                    # module.mappings = ((uncond_emb, partial(make_centre_vertical_mask, percent=0.2)),)
+                    module.mappings = (
+                        (neg_embed_u, partial(make_centre_vertical_mask, percent=0.2)),
+                        (uncond_emb, partial(make_left_mask, percent=0.8)),
+                        (uncond_emb, partial(make_right_mask, percent=0.8)),
+                    )
                 else:
                     module.mappings = None
 
@@ -207,7 +210,7 @@ def stablediffusion(
                     module.mappings = (
                         (left_emb, partial(make_left_mask, percent=0.8)),
                         (right_emb, partial(make_right_mask, percent=0.8)),
-                        (uncond_emb, partial(make_centre_vertical_mask, percent=0.2)),
+                        (neg_embed_u, partial(make_centre_vertical_mask, percent=0.2)),
                     )
                 else:
                     module.mappings = None
@@ -222,7 +225,7 @@ def stablediffusion(
             latent_model_input = scheduler.scale_model_input(latent_model_input, t)
 
             # Predict the unconditional noise residual
-            
+
             use_unconditional_mappings()
             noise_pred_uncond = unet(
                 latent_model_input, t, encoder_hidden_states=dummy_emb
