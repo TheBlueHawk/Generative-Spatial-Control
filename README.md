@@ -1,8 +1,5 @@
-# Generative-Spatial-Control
-Research project for the seminar "Generative Visual Models".
-
-
-
+# Cross-Attention Masking for Generative Spatial Control
+This repository contains our work for the research project part of the seminar "Generative Visual Models". We focused on improving spatial control within Stable Diffusion models, addressing the common issue of object misplacement and window artifacts. We introduce a method that leverages cross-attention control in the latent space, aiming for more spatially coherent image generation.
 
 ## Setup instructions
 
@@ -10,38 +7,19 @@ Research project for the seminar "Generative Visual Models".
 
 `git clone --recurse-submodules git@github.com:TheBlueHawk/Generative-Spatial-Control.git`
 
-### Euler install
-Login to Euler:
+### Env setup
+
 ```bash
-ssh {eth-username}@euler.ethz.ch
-```
-Setup ssh keys with github and add to ssh-agent:
-```bash
-eval `ssh-agent`
-ssh-add {path-to-github-ssh-key}
-```
-Setup euler:
-```bash
-cd ../../scratch/{ethz-username}
-python3 -m venv venv
+python -m venv venv
 source venv/bin/activate
-env2lmod
-module load gcc/8.2.0 python_gpu/3.10.4 r/4.0.2 git-lfs/2.3.0 eth_proxy npm/6.14.9
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-pip3 install -r requirements.txt
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install -r requirements.txt
 pip install -U xformers
-export PYTHONPATH="${PYTHONPATH}:/cluster/home/{ethz-username}/Generative-Spatial-Control"
 ```
 
-### Submit jobs
-#### Interactive shell
+## Usage 
 ```bash
-srun --gpus=1 --ntasks=4 --mem-per-cpu=4G --pty bash
+python script.py
 ```
 
-
-#### Batch
-([gpu instruction](https://scicomp.ethz.ch/wiki/Getting_started_with_GPUs), [euler batch](https://scicomp.ethz.ch/wiki/Using_the_batch_system)):
-```bash
-TODO
-```
+Or just modify the Jupyter notebook.
